@@ -1,0 +1,60 @@
+# OS files
+Thumbs.db
+.DS_Store
+
+# IDE files
+.idea/
+
+*.swp
+*.swo
+*~
+
+# Virtual environment
+.venv/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build outputs
+frontend/node_modules/
+dist/
+build/
+*.tsbuildinfo
+src/agents/static/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test cache
+.pytest_cache/
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Database files
+*.db
+*.sqlite3
+
+# Package files
+*.egg-info/
+*.egg
+MANIFEST
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+
+# Misc
+.trae/

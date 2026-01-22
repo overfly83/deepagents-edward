@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import './index.css';
+import { useTypingEffect } from './hooks/useTypingEffect';
 
 // Define a simple logging utility
 const logger = {
@@ -9,11 +10,12 @@ const logger = {
   error: (message: string, ...args: any[]) => console.error('[App]', message, ...args)
 };
 
-interface Message {
+export interface Message {
   text: string;
   isUser: boolean;
   isDebug?: boolean;
   isProcess?: boolean;
+  isStreaming?: boolean;
 }
 
 const MessageItem = ({ message, isUser, isDebug, isProcess }: { message: string; isUser: boolean; isDebug?: boolean; isProcess?: boolean }) => {
@@ -55,7 +57,6 @@ function App() {
   // State for streaming
   const [useStreaming, setUseStreaming] = useState(true);
   const [, setIsReceivingChunks] = useState(false);
-
   // Initialize WebSocket connection
   useEffect(() => {
     logger.info('Component mounted, initializing WebSocket connection');
@@ -76,7 +77,7 @@ function App() {
         setConnectionStatus('connected');
         logger.info('WebSocket connected');
         // Add welcome message
-        setMessages(prev => [...prev, { text: 'Hello! I\'m a weather assistant. How can I help you today?', isUser: false }]);
+        setMessages(prev => [...prev, { text: 'Hello! I\'m DeepAgents, your AI assistant. How can I help you today?', isUser: false }]);
       };
       
       websocket.onmessage = (event) => {
@@ -87,31 +88,13 @@ function App() {
           
           if (data.type === 'chunk') {
             logger.debug('Received chunk:', data.content);
-            setIsReceivingChunks(true);
-            // Append chunk to the last message only if we're already receiving chunks
-            setMessages(prev => {
-              const newMessages = [...prev];
-              if (newMessages.length > 0 && !newMessages[newMessages.length - 1].isUser && !newMessages[newMessages.length - 1].isProcess) {
-                newMessages[newMessages.length - 1].text += data.content;
-              } else {
-                newMessages.push({ text: data.content, isUser: false });
-              }
-              return newMessages;
-            });
+            setIsTyping(true);
+            addChunk(data.content);
           } else if (data.type === 'complete') {
             logger.debug('Received complete message:', data.content);
-            // setMessages(prev => {
-            //   // Only update the last message if we're receiving chunks
-            //   if (isReceivingChunks && prev.length > 0 && !prev[prev.length - 1].isUser && !prev[prev.length - 1].isProcess) {
-            //     const newMessages = [...prev];
-            //     newMessages[newMessages.length - 1].text = data.content;
-            //     return newMessages;
-            //   }
-            //   // Otherwise append as new message
-            //   return [...prev, { text: data.content, isUser: false }];
-            // });
-            setIsReceivingChunks(false);
+            completeStreaming();
             setIsTyping(false);
+
           } else if (data.type === 'debug') {
             logger.debug('Received debug message:', data);
             // Always append debug messages as new messages, never merge with chunks
@@ -181,6 +164,11 @@ function App() {
     }
   }, []);
 
+  // Use the typing effect hook
+  const { addChunk, completeStreaming, resetStreaming } = useTypingEffect({
+    onMessagesUpdate: setMessages
+  });
+
   // Scroll to bottom when messages change
   useEffect(() => {
     if (messageContainerRef.current) {
@@ -193,6 +181,9 @@ function App() {
     e.preventDefault();
     
     if (!inputValue.trim() || !ws || connectionStatus !== 'connected') return;
+    
+    // Reset streaming state before new request
+    resetStreaming();
     
     // Add user message
     setMessages(prev => [...prev, { text: inputValue, isUser: true }]);
@@ -211,8 +202,8 @@ function App() {
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center">
-            <i className="fas fa-cloud-sun text-indigo-500 text-2xl mr-3"></i>
-            <h1 className="text-xl font-semibold text-gray-800">Weather Assistant</h1>
+            <i className="fas fa-robot text-indigo-500 text-2xl mr-3"></i>
+            <h1 className="text-xl font-semibold text-gray-800">DeepAgents AI</h1>
           </div>
           <div className="flex items-center">
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -243,9 +234,9 @@ function App() {
           <div className="flex-1 p-4 message-container" ref={messageContainerRef}>
             {messages.length === 0 && (
               <div className="text-center text-gray-500 mt-8">
-                <i className="fas fa-comments text-4xl mb-4"></i>
-                <p>Hello! I'm a weather assistant that can help you check weather information.</p>
-                <p className="mt-2">Try asking: "What's the weather like in Shanghai today?"</p>
+                <i className="fas fa-robot text-4xl mb-4"></i>
+                <p>Hello! I'm DeepAgents, your AI assistant that can help with various tasks.</p>
+                <p className="mt-2">Try asking questions or requesting assistance with different scenarios.</p>
               </div>
             )}
             {messages.map((message, index) => (

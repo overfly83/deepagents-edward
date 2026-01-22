@@ -3,12 +3,10 @@ import os
 import logging
 
 # Add src directory to path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 # Test the logger from utils
-from src.utils.logger import get_logger, log_with_source
+from utils.logger import get_logger, log_with_source
 
 # Test 1: Basic logger with colored levels
 print("=== Test 1: Basic Logger with Colored Levels ===")

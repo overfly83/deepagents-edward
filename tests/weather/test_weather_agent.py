@@ -20,7 +20,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import the module directly
-from agents.weather_agent import WeatherAgent, get_current_weather, get_weather_forecast
+from agents.weather.weather_agent import WeatherAgent, get_current_weather, get_weather_forecast
 
 
 def test_weather_tools():

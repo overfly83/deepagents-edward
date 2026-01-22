@@ -33,7 +33,7 @@ Windows users can directly use the following batch scripts:
 
 ```bash
 # Install dependencies and create virtual environment
-install_simple.bat
+install.bat
 
 # Start both frontend and backend services
 start.bat
@@ -68,6 +68,7 @@ pip install -r requirements.txt
 
 ```bash
 # From project root directory
+export PYTHONPATH=/your/path/to/deepagents-edward/src;%PYTHONPATH%
 cd backend
 python server.py
 ```

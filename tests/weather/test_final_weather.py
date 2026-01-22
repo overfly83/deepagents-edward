@@ -7,12 +7,10 @@ import sys
 import os
 
 # Add the project root directory to the Python path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 # Import the module directly
-from agents.weather_agent import WeatherAgent
+from agents.weather.weather_agent import WeatherAgent
 
 def main():
     print("Testing WeatherAgent with Shanghai weather query...")

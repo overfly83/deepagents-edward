@@ -1,11 +1,10 @@
+import uuid
 from typing import Dict, List, Optional, Any, Tuple
 from agents.agent_base import AgentBase
 from agents.weather.weather_agent import WeatherAgent
-import os
-from dotenv import load_dotenv
 from utils.logger import get_logger
-from langchain_community.chat_models import ChatZhipuAI
-import uuid
+from utils.llm import get_llm
+
 
 logger = get_logger(__name__, source=__name__)
 
@@ -15,8 +14,6 @@ class AgentManager:
     
     def __init__(self):
         """Initialize the AgentManager with available agents."""
-        # Load environment variables
-        load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
         
         # Initialize LLM for intent detection
         self._initialize_llm()
@@ -37,20 +34,11 @@ class AgentManager:
     def _initialize_llm(self):
         """Initialize the LLM for intent detection."""
         try:
-            # Get API key from environment
-            zhipu_api_key = os.getenv("ZHIPU_API_KEY")
-            if not zhipu_api_key:
-                logger.error("Error: ZHIPU_API_KEY not found in environment variables. Please set it in your .env file.")
-                # Fallback to pattern matching if API key is missing
-                self.llm_available = False
-                logger.warning("Falling back to pattern-based intent detection")
-                return
-            
-            # Initialize ChatZhipuAI for intent detection
-            self.llm = ChatZhipuAI(
+            # Use centralized LLM utility for intent detection
+            self.llm = get_llm(
+                provider="zhipu",
                 model="glm-4-flash",
-                temperature=0,
-                api_key=zhipu_api_key
+                temperature=0
             )
             
             self.llm_available = True

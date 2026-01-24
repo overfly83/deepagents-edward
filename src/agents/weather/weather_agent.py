@@ -9,9 +9,11 @@ from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from langchain_core.tools import tool
-from langchain_community.chat_models import ChatZhipuAI
 from deepagents import create_deep_agent, MemoryMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
+
+# Import LLM utility
+from utils.llm import get_llm
 
 # Import custom logger utility
 from utils.logger import get_logger
@@ -67,16 +69,7 @@ class WeatherAgent(AgentBase):
         """
         super().__init__()  # Initialize the base class with logging capabilities
         
-        if not test_mode:
-            # Validate ZhipuAI API key is available
-            zhipu_api_key = os.getenv("ZHIPU_API_KEY")
-            if not zhipu_api_key:
-                raise ValueError("Error: ZHIPU_API_KEY not found in environment variables. Please set it in your .env file.")
-        else:
-            # Use a mock API key for testing purposes
-            zhipu_api_key = "mock_api_key_for_testing"
-        
-        self.llm = ChatZhipuAI(model=model, temperature=temperature, api_key=zhipu_api_key)
+        self.llm = get_llm(provider="zhipu", model=model, temperature=temperature, test_mode=test_mode)
         self.tools = [get_current_weather, get_weather_forecast]
         
         # System prompt for the agent

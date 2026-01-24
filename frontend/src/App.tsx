@@ -15,7 +15,6 @@ export interface Message {
   isUser: boolean;
   isDebug?: boolean;
   isProcess?: boolean;
-  isStreaming?: boolean;
 }
 
 const MessageItem = ({ message, isUser, isDebug, isProcess }: { message: string; isUser: boolean; isDebug?: boolean; isProcess?: boolean }) => {
@@ -156,7 +155,7 @@ function App() {
           websocket.close();
         }
       };
-      
+
     } catch (error) {
       logger.error('Error creating WebSocket:', error);
       setConnectionStatus('error');

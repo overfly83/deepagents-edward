@@ -1,14 +1,16 @@
-# Weather Assistant Web Application
+# DeepAgents AI Platform
 
-This is a weather assistant web application based on FastAPI and React, providing conversational weather query services.
+This is a general-purpose AI agent platform based on FastAPI and React, providing conversational AI services for various scenarios.
 
 ## Features
 
-- 🌤️ Real-time weather query
+- 🤖 General-purpose AI agent platform
 - 💬 Conversational interface
-- 🔄 Streaming responses
+- 🔄 Streaming responses with natural typing effect
 - 📱 Responsive design
 - 🎨 Modern and beautiful UI
+- ⚡ High-performance architecture
+- 🔧 Extensible agent framework
 
 ## Technology Stack
 
@@ -16,7 +18,8 @@ This is a weather assistant web application based on FastAPI and React, providin
 - FastAPI - High-performance Python web framework
 - WebSocket - Real-time communication
 - LangChain - AI conversation framework
-- Open-Meteo API - Weather data source
+- DeepAgents - Custom agent framework
+- Multiple LLM integrations
 
 ### Frontend
 - React - UI framework
@@ -95,23 +98,22 @@ The frontend development server will start at http://localhost:3000
 
 ## Usage
 
-1. Open your browser and visit http://localhost:3000
-2. Enter weather-related questions in the input box, for example:
+1. Open your browser and visit http://localhost:3000 (or the port shown in your terminal)
+2. Enter your questions or requests in the input box, for example:
    - "What's the weather like in Shanghai today?"
-   - "How's the weather in Beijing for the next three days?"
-   - "Will it rain in New York tomorrow?"
+   - "Explain quantum computing in simple terms"
+   - "Write a Python function to calculate factorial"
 
-3. The system will return weather information and answers in real-time.
+3. The system will return AI-generated answers in real-time with natural typing effect.
 
 ## Project Structure
 
 ```
-deepagents-demo/
-├── backend/
-│   ├── server.py          # FastAPI server
-│   ├── static/
-│   │   └── index.html     # Simple frontend interface
-│   └── README.md          # Backend documentation
+deepagents-edward/
+├── src/
+│   ├── agents/            # AI agent implementations
+│   ├── utils/             # Utility functions
+│   └── test_workflow.py   # Workflow testing
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx        # Main application component
@@ -138,11 +140,12 @@ deepagents-demo/
 
 Future features to add:
 - Multi-language support
-- Weather warning notifications
-- Historical weather query
-- Weather chart visualization
+- Agent marketplace
+- Custom agent creation
+- Advanced analytics dashboard
 - User account system
 - Personalized settings
+- Integration with external services
 
 ## Deployment Instructions
 

@@ -69,7 +69,6 @@ export const useTypingEffect = ({ onMessagesUpdate }: TypingEffectConfig): Typin
           if (streamingMessageIndexRef.current !== -1 && streamingMessageIndexRef.current < newMessages.length) {
             newMessages[streamingMessageIndexRef.current] = {
               ...newMessages[streamingMessageIndexRef.current],
-              isStreaming: false
             };
           }
           return newMessages;
@@ -109,7 +108,7 @@ export const useTypingEffect = ({ onMessagesUpdate }: TypingEffectConfig): Typin
     if (streamingMessageIndexRef.current === -1) {
       onMessagesUpdate((prevMessages) => {
         const newMessages = [...prevMessages];
-        newMessages.push({ text: '', isUser: false, isStreaming: true });
+        newMessages.push({ text: '', isUser: false});
         streamingMessageIndexRef.current = newMessages.length - 1;
         return newMessages;
       });

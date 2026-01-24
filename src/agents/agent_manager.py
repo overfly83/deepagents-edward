@@ -60,7 +60,7 @@ class AgentManager:
         """
         for agent_name, agent in self.agents.items():
             if intent in agent.get_supported_intents():
-                return agent
+                return agent_name, agent
         
         return None
     
@@ -95,7 +95,7 @@ class AgentManager:
         else:
             # Step 2: Looking for appropriate agent
             logger.info("Step 2: Looking for appropriate agent...")
-            agent = self.get_agent_for_intent(intent)
+            agent_name, agent = self.get_agent_for_intent(intent)
             
             if not agent:
                 final_result = {
@@ -105,7 +105,7 @@ class AgentManager:
                 logger.info(f"=== Workflow Complete ===")
                 return final_result
             
-            logger.info(f"Step 2: Found agent: {type(agent).__name__}")
+            logger.info(f"Step 2: Found agent: {agent_name}")
 
             # Step 3: Agent processing
             logger.info("Step 3: Processing with agent...")
@@ -142,13 +142,13 @@ class AgentManager:
         logger.info("Step 2: Looking for appropriate agent...")
         
         # Get the appropriate agent
-        agent = self.get_agent_for_intent(intent)
+        agent_name, agent = self.get_agent_for_intent(intent)
         
         if not agent:
             yield {"messages": [{"content": f"I'm sorry, I don't have an agent that can handle '{intent}' requests."}]}
             return
         
-        logger.info(f"Step 2: Found agent: {type(agent).__name__}")
+        logger.info(f"Step 2: Found agent: {agent_name}")
         
         # Step 3: Agent processing
         logger.info("Step 3: Processing with agent...")

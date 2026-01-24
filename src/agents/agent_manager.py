@@ -1,8 +1,10 @@
 from typing import Dict, List, Optional, Any
 from agents.agent_base import AgentBase
 from agents.weather.weather_agent import WeatherAgent
-import re
+import os
+from dotenv import load_dotenv
 from utils.logger import get_logger
+from langchain_community.chat_models import ChatZhipuAI
 
 logger = get_logger(__name__, source=__name__)
 
@@ -12,42 +14,123 @@ class AgentManager:
     
     def __init__(self):
         """Initialize the AgentManager with available agents."""
+        # Load environment variables
+        load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+        
+        # Initialize LLM for intent detection
+        self._initialize_llm()
+        
         # Initialize all available agents
         self.agents: Dict[str, AgentBase] = {
             "weather": WeatherAgent()
         }
         
-        # Intent patterns for routing
-        self.intent_patterns = {
-            "weather_inquiry": [
-                # English keywords
-                r"weather",
-                r"temperature",
-                r"forecast",
-                r"rain",
-                r"sunny",
-                r"cloudy",
-                r"windy",
-                r"storm",
-                # Chinese keywords for weather (天气)
-                r"天气",
-                r"温度",
-                r"预报",
-                r"下雨",
-                r"晴天",
-                r"多云",
-                r"有风",
-                r"风暴",
-                r"阴天",
-                r"小雨",
-                r"大雨",
-                r"雪",
-                r"雾霾"
-            ]
-        }
+        # Get all supported intents from agents
+        self.supported_intents = self._get_all_supported_intents()
+        
+        logger.info(f"AgentManager initialized with supported intents: {self.supported_intents}")
+    
+    def _initialize_llm(self):
+        """Initialize the LLM for intent detection."""
+        try:
+            # Get API key from environment
+            zhipu_api_key = os.getenv("ZHIPU_API_KEY")
+            if not zhipu_api_key:
+                logger.error("Error: ZHIPU_API_KEY not found in environment variables. Please set it in your .env file.")
+                # Fallback to pattern matching if API key is missing
+                self.llm_available = False
+                logger.warning("Falling back to pattern-based intent detection")
+                return
+            
+            # Initialize ChatZhipuAI for intent detection
+            self.llm = ChatZhipuAI(
+                model="glm-4-flash",
+                temperature=0,
+                api_key=zhipu_api_key
+            )
+            
+            self.llm_available = True
+            logger.info("LLM initialized for intent detection")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Fallback to pattern matching if LLM fails
+            self.llm_available = False
+            logger.warning("Falling back to pattern-based intent detection")
+    
+    def _get_all_supported_intents(self) -> List[str]:
+        """Get all supported intents from all available agents.
+        
+        Returns:
+            List of all supported intents.
+        """
+        all_intents = set()
+        for agent in self.agents.values():
+            intents = agent.get_supported_intents()
+            all_intents.update(intents)
+        return list(all_intents)
     
     def detect_intent(self, message: str) -> Optional[str]:
-        """Detect the intent from a user message.
+        """Detect the intent from a user message using LLM.
+        
+        Args:
+            message: The user's message.
+            
+        Returns:
+            The detected intent or None if no intent is detected.
+        """
+        if not message:
+            return None
+        
+        # Check if LLM is available
+        if not self.llm_available:
+            logger.info(f"Using fallback intent detection for message: {message}")
+            return self._fallback_intent_detection(message)
+        
+        try:
+            # Create a prompt for intent detection
+            prompt = f"""
+            You are an intent detection system. Your task is to determine the intent of the user's message.
+            
+            Available intents:
+            {', '.join(self.supported_intents)}
+            
+            If the message doesn't match any of the above intents, return 'None'.
+            
+            User message: {message}
+            
+            Only return the intent name, nothing else.
+            """
+            
+            logger.debug(f"Sending prompt to LLM: {prompt[:100]}...")
+            
+            # Get response from LLM
+            response = self.llm.invoke(prompt)
+            detected_intent = response.content.strip()
+            
+            logger.info(f"LLM intent detection - Message: {message}, Detected Intent: {detected_intent}")
+            
+            # Validate the detected intent
+            if detected_intent in self.supported_intents:
+                return detected_intent
+            elif detected_intent.lower() == "none":
+                return None
+            else:
+                logger.warning(f"LLM returned unknown intent: {detected_intent}, falling back to keyword matching")
+                return self._fallback_intent_detection(message)
+                
+        except Exception as e:
+            logger.error(f"Error during intent detection: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Fallback to basic keyword matching for robustness
+            return self._fallback_intent_detection(message)
+    
+    def _fallback_intent_detection(self, message: str) -> Optional[str]:
+        """Fallback intent detection using simple keyword matching.
         
         Args:
             message: The user's message.
@@ -57,9 +140,17 @@ class AgentManager:
         """
         message_lower = message.lower()
         
-        for intent, patterns in self.intent_patterns.items():
-            for pattern in patterns:
-                if re.search(pattern, message_lower):
+        # Basic keyword matching as fallback
+        intent_keywords = {
+            "weather_inquiry": [
+                "weather", "temperature", "forecast", "rain", "sunny", "cloudy", "windy", "storm",
+                "天气", "温度", "预报", "下雨", "晴天", "多云", "有风", "风暴", "阴天", "小雨", "大雨", "雪", "雾霾"
+            ]
+        }
+        
+        for intent, keywords in intent_keywords.items():
+            for keyword in keywords:
+                if keyword in message_lower:
                     return intent
         
         return None

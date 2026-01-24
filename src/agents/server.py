@@ -146,8 +146,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         await websocket.send_json({"type":"debug","message":"weather agent streaming started..."})
                         # Process message with agent manager in streaming mode
                         for chunk in agent_manager.stream_handle_message(user_message):
-                            # Extract content from chunk
-                            if "messages" in chunk:
+                            # Handle plan chunk
+                            if "type" in chunk and chunk["type"] == "plan":
+                                # Send the plan to frontend
+                                await websocket.send_json({"type": "plan", "content": chunk["content"]})
+                                logger.info(f"Sent plan to session {session_id}")
+                            elif "messages" in chunk:
+                                # Handle regular message chunks
                                 for message in chunk["messages"]:
                                     content = None
                                     # Handle different message formats
@@ -221,6 +226,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                 **debug_dict
                             }
                             await websocket.send_json(debug_msg)
+                        
+                        # Send plan if it exists
+                        if "plan" in result:
+                            await websocket.send_json({"type": "plan", "content": result["plan"]})
+                            logger.info(f"Sent plan to session {session_id}")
                         
                         # Send complete response
                         await websocket.send_json({"type":"complete","content": result["response"]})

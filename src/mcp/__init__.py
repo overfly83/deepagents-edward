@@ -1,0 +1,1 @@
+"""Main MCP (Model Component Provider) module."""

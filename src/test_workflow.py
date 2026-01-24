@@ -11,8 +11,8 @@ from agents.agent_manager import AgentManager
 
 print("=== Testing Standard Workflow ===")
 
-# Create an instance with debug mode enabled
-agent_manager = AgentManager(debug_mode=True)
+# Create an instance
+agent_manager = AgentManager()
 print("AgentManager initialized!")
 
 # Test with a weather query

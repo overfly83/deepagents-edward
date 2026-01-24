@@ -20,6 +20,7 @@ class AgentManager:
         # Intent patterns for routing
         self.intent_patterns = {
             "weather_inquiry": [
+                # English keywords
                 r"weather",
                 r"temperature",
                 r"forecast",
@@ -27,7 +28,21 @@ class AgentManager:
                 r"sunny",
                 r"cloudy",
                 r"windy",
-                r"storm"
+                r"storm",
+                # Chinese keywords for weather (天气)
+                r"天气",
+                r"温度",
+                r"预报",
+                r"下雨",
+                r"晴天",
+                r"多云",
+                r"有风",
+                r"风暴",
+                r"阴天",
+                r"小雨",
+                r"大雨",
+                r"雪",
+                r"雾霾"
             ]
         }
     
@@ -107,14 +122,18 @@ class AgentManager:
             
             logger.info(f"Step 2: Found agent: {agent_name}")
 
-            # Step 3: Agent processing
-            logger.info("Step 3: Processing with agent...")
+            # Step 3: Plan task
+            logger.info("Step 3: Planning task...")
+            agent.plan_task(message)
+
+            # Step 4: Agent processing
+            logger.info("Step 4: Processing with agent...")
             response = agent.chat(message)
 
             # Agent logs final result
             agent.log_final_result(response)
             final_result = {"response": response}
-            logger.info("Step 3: Agent processing complete")
+            logger.info("Step 4: Agent processing complete")
             return final_result
 
     def stream_handle_message(self, message: str):
@@ -150,14 +169,18 @@ class AgentManager:
         
         logger.info(f"Step 2: Found agent: {agent_name}")
         
-        # Step 3: Agent processing
-        logger.info("Step 3: Processing with agent...")
+        # Step 3: Plan task
+        logger.info("Step 3: Planning task...")
+        agent.plan_task(message)
+        
+        # Step 4: Agent processing
+        logger.info("Step 4: Processing with agent...")
         
         # Use the agent to get a streaming response
         for chunk in agent.stream_chat(message):
             yield chunk
         
-        logger.info("Step 3: Agent processing complete")
+        logger.info("Step 4: Processing with agent complete")
     
     async def run_agent(self, agent_name: str, *args, **kwargs) -> Dict[str, Any]:
         """Run a specific agent with provided parameters.
@@ -174,6 +197,13 @@ class AgentManager:
             return {"error": f"Agent '{agent_name}' not found."}
         
         agent = self.agents[agent_name]
+        
+        # Plan task if message is provided in args or kwargs
+        message = args[0] if args else kwargs.get('message', '')
+        if message:
+            logger.info("Planning task...")
+            agent.plan_task(message)
+        
         return await agent.run(*args, **kwargs)
     
     def get_available_agents(self) -> List[str]:

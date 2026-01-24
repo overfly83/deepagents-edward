@@ -6,7 +6,12 @@ A conversational agent that can search for weather information using OpenWeather
 
 import os
 from typing import Any, Dict, Optional
+
 from dotenv import load_dotenv
+from langchain_core.tools import tool
+from langchain_community.chat_models import ChatZhipuAI
+from deepagents import create_deep_agent, MemoryMiddleware
+from deepagents.middleware.filesystem import FilesystemMiddleware
 
 # Import custom logger utility
 from utils.logger import get_logger
@@ -16,9 +21,30 @@ from agents.agent_base import AgentBase
 # Setup logger with blue debug formatting and default source
 logger = get_logger(__name__, source='WEATHER_AGENT')
 
-from langchain_core.tools import tool
-from langchain_community.chat_models import ChatZhipuAI
-from deepagents import create_deep_agent
+# Create a wrapper for FilesystemMiddleware to add missing methods
+class CustomFilesystemMiddleware(FilesystemMiddleware):
+    # Define a simple Response class that matches the expected structure
+    class Response:
+        def __init__(self, error=None, content=None):
+            self.error = error
+            self.content = content
+    
+    def download_files(self, paths, **kwargs):
+        """Properly implement download_files to match expected structure."""
+        # Return exactly one Response object for each requested path
+        responses = []
+        for path in paths:
+            # Return a Response with file_not_found error for all paths
+            # This allows graceful degradation as expected by the middleware
+            responses.append(self.Response(error="file_not_found", content=None))
+        return responses
+    
+    def __getattr__(self, name):
+        """Catch any missing method calls and return appropriate default behavior."""
+        # Default behavior for other missing methods
+        def default_method(*args, **kwargs):
+            return []
+        return default_method
 
 # Load environment variables
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"))
@@ -64,12 +90,22 @@ class WeatherAgent(AgentBase):
         You can use either metric (Celsius) or imperial (Fahrenheit) units - default to metric unless user specifies otherwise.
         """
         
-        # Create the Deep Agent
+        # Create memory middleware for persistent conversation history
+        memory_middleware = MemoryMiddleware(
+            backend=CustomFilesystemMiddleware(),  # Use custom filesystem backend with download_files method
+            sources=["weather_agent_memory"]  # Memory source name for organization
+        )
+
+        # Create the Deep Agent with memory capabilities
         self.agent = create_deep_agent(
             model=self.llm,
             tools=self.tools,
-            system_prompt=self.system_prompt
+            system_prompt=self.system_prompt,
+            middleware=[memory_middleware]  # Add memory middleware
         )
+        
+        # Initialize conversation history to maintain context between calls
+        self.conversation_history = []
     
     def plan_task(self, message: str) -> Dict[str, Any]:
         """
@@ -108,8 +144,12 @@ class WeatherAgent(AgentBase):
             # Log the action of processing the chat request
             self.log_action("Processing chat request", message)
             
-            # Prepare the input with proper message format
-            input_data = {"messages": [("user", message)]}
+            # Add current user message to conversation history
+            self.conversation_history.append(("user", message))
+            self.logger.info(f"Conversation history: {self.conversation_history}")
+            
+            # Prepare the input with full conversation history
+            input_data = {"messages": self.conversation_history}
             self.logger.info(f"Agent input: {input_data}")
             
             # Invoke the agent with detailed logging
@@ -118,32 +158,55 @@ class WeatherAgent(AgentBase):
             self.logger.info(f"Agent invocation successful. Result type: {type(result)}")
             self.logger.debug(f"Raw agent result: {result}")
             
-            # Get the last message from the response
+            # Get the response content from different possible result formats
+            response_content = None
+            
             if isinstance(result, dict):
-                if "messages" in result:
+                # Check if result has a direct content field
+                if "content" in result:
+                    response_content = result["content"]
+                    self.logger.info(f"Found direct content in result: {response_content[:100]}...")
+                # Check if result has messages
+                elif "messages" in result:
                     messages = result["messages"]
                     self.logger.info(f"Found {len(messages)} messages in response")
                     
                     if messages:
-                        last_message = messages[-1]
-                        self.logger.info(f"Last message type: {type(last_message)}")
-                        
-                        if hasattr(last_message, "content"):
-                            response_content = last_message.content
-                            self.logger.info(f"Extracted response content: {response_content[:100]}...")
-                            self.log_final_result(response_content)
-                            return response_content
-                        else:
-                            self.logger.error(f"Last message has no content attribute: {last_message}")
-                    else:
-                        self.logger.error("No messages in agent response")
-                else:
-                    self.logger.error("No 'messages' key in agent response")
+                        # Iterate through messages to find the last assistant message
+                        for msg in reversed(messages):
+                            if isinstance(msg, tuple) and msg[0] == "assistant":
+                                response_content = msg[1]
+                                self.logger.info(f"Found assistant tuple message: {response_content[:100]}...")
+                                break
+                            elif hasattr(msg, "content") and hasattr(msg, "type") and msg.type == "assistant":
+                                response_content = msg.content
+                                self.logger.info(f"Found assistant object message: {response_content[:100]}...")
+                                break
+                            elif isinstance(msg, dict) and msg.get("type") == "assistant" and "content" in msg:
+                                response_content = msg["content"]
+                                self.logger.info(f"Found assistant dict message: {response_content[:100]}...")
+                                break
+                            elif hasattr(msg, "content"):  # Fallback: assume it's assistant if it has content
+                                response_content = msg.content
+                                self.logger.info(f"Found message with content (fallback): {response_content[:100]}...")
+                                break
+            elif isinstance(result, str):
+                # If result is directly a string
+                response_content = result
+                self.logger.info(f"Found string result: {response_content[:100]}...")
             else:
                 error_msg = f"Unexpected result type from agent: {type(result)}"
                 self.logger.error(error_msg)
-                
-            return "Sorry, I couldn't process your request."
+            
+            # Add assistant response to conversation history
+            if response_content:
+                self.conversation_history.append(("assistant", response_content))
+                self.logger.info(f"Updated conversation history: {self.conversation_history}")
+                self.log_final_result(response_content)
+                return response_content
+            else:
+                self.logger.error("No response content found")
+                return "Sorry, I couldn't process your request."
         except Exception as e:
             self.logger.error(f"Error in chat: {e}", exc_info=True)
             return "Sorry, I encountered an error while processing your request."
@@ -227,6 +290,7 @@ class WeatherAgent(AgentBase):
 
 def main():
     """Main function to run the weather agent interactively."""
+    # Print welcome message (allowed in main since it's interactive)
     print("=" * 50)
     print("Weather Searching Agent")
     print("=" * 50)

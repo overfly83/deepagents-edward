@@ -1,10 +1,11 @@
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from agents.agent_base import AgentBase
 from agents.weather.weather_agent import WeatherAgent
 import os
 from dotenv import load_dotenv
 from utils.logger import get_logger
 from langchain_community.chat_models import ChatZhipuAI
+import uuid
 
 logger = get_logger(__name__, source=__name__)
 
@@ -27,6 +28,9 @@ class AgentManager:
         
         # Get all supported intents from agents
         self.supported_intents = self._get_all_supported_intents()
+        
+        # Conversation memory management
+        self.conversation_history: Dict[str, List[Tuple[str, str]]] = {}
         
         logger.info(f"AgentManager initialized with supported intents: {self.supported_intents}")
     
@@ -170,10 +174,11 @@ class AgentManager:
         
         return None
     
-    def handle_message(self, message: str) -> Any:
+    def handle_message(self, message: str,session_id: Optional[str] = None) -> Any:
         """Handle a user message by following the standard workflow:
         1. Detect user's intent
-        2. Detect result
+        2. Detect resulting agent
+        3. Plan task with conversation history
 
         4. Dispatch to appropriate agent with proper logging
         
@@ -215,27 +220,49 @@ class AgentManager:
 
             # Step 3: Plan task
             logger.info("Step 3: Planning task...")
-            agent.plan_task(message)
+            
+            # Get conversation context for this session
+            conversation_context = "\n".join([f"{role}: {content}" for role, content in self.conversation_history[session_id][-5:]])  # Last 5 messages
+            full_message = f"Conversation history:\n{conversation_context}\n\nNew user message: {message}"
+            
+            agent.plan_task(full_message)
 
             # Step 4: Agent processing
             logger.info("Step 4: Processing with agent...")
-            response = agent.chat(message)
+            
+            logger.debug(f"Full message with context for agent: {full_message[:100]}...")
+            response = agent.chat(full_message)
 
             # Agent logs final result
             agent.log_final_result(response)
             final_result = {"response": response}
+            
+            # Update conversation history with assistant response
+            self.conversation_history[session_id].append(("assistant", response))
+            
             logger.info("Step 4: Agent processing complete")
             return final_result
 
-    def stream_handle_message(self, message: str):
+    def stream_handle_message(self, message: str, session_id: Optional[str] = None):
         """Handle a user message by detecting intent and routing to the appropriate agent with streaming.
         
         Args:
             message: The user's message.
+            session_id: Optional session ID to maintain context.
             
         Yields:
             Response chunks as they are generated.
         """
+        # Generate a session ID if not provided
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            logger.info(f"Generated new session ID: {session_id}")
+        
+        # Initialize conversation history for new sessions
+        if session_id not in self.conversation_history:
+            self.conversation_history[session_id] = []
+            logger.info(f"Initialized conversation history for session {session_id}")
+        
         # Step 1: Detecting intent
         logger.info("Step 1: Detecting user intent...")
         
@@ -243,7 +270,11 @@ class AgentManager:
         intent = self.detect_intent(message)
         
         if not intent:
-            yield {"messages": [{"content": "I'm sorry, I don't understand what you're asking. Could you please rephrase?"}]}
+            response = {"messages": [{"content": "I'm sorry, I don't understand what you're asking. Could you please rephrase?"}]}
+            # Add to conversation history
+            self.conversation_history[session_id].append(("user", message))
+            self.conversation_history[session_id].append(("assistant", response["messages"][0]["content"]))
+            yield response
             return
         
         logger.info(f"Step 1: Intent detected: {intent}")
@@ -255,21 +286,45 @@ class AgentManager:
         agent_name, agent = self.get_agent_for_intent(intent)
         
         if not agent:
-            yield {"messages": [{"content": f"I'm sorry, I don't have an agent that can handle '{intent}' requests."}]}
+            response = {"messages": [{"content": f"I'm sorry, I don't have an agent that can handle '{intent}' requests."}]}
+            # Add to conversation history
+            self.conversation_history[session_id].append(("user", message))
+            self.conversation_history[session_id].append(("assistant", response["messages"][0]["content"]))
+            yield response
             return
         
         logger.info(f"Step 2: Found agent: {agent_name}")
         
         # Step 3: Plan task
         logger.info("Step 3: Planning task...")
-        agent.plan_task(message)
+        
+        # Get conversation context for this session
+        conversation_context = "\n".join([f"{role}: {content}" for role, content in self.conversation_history[session_id][-5:]])  # Last 5 messages
+        full_message = f"Conversation history:\n{conversation_context}\n\nNew user message: {message}"
+        
+        agent.plan_task(full_message)
         
         # Step 4: Agent processing
         logger.info("Step 4: Processing with agent...")
         
+        logger.debug(f"Full message with context for agent: {full_message[:100]}...")
+        
         # Use the agent to get a streaming response
-        for chunk in agent.stream_chat(message):
+        response_chunks = []
+        for chunk in agent.stream_chat(full_message):
+            response_chunks.append(chunk)
             yield chunk
+        
+        # Extract final response to update conversation history
+        if response_chunks:
+            last_chunk = response_chunks[-1]
+            if isinstance(last_chunk, dict) and "messages" in last_chunk:
+                for msg in last_chunk["messages"]:
+                    if "content" in msg:
+                        self.conversation_history[session_id].append(("user", message))
+                        self.conversation_history[session_id].append(("assistant", msg["content"]))
+                        logger.info(f"Updated conversation history for session {session_id}")
+                        break
         
         logger.info("Step 4: Processing with agent complete")
     
@@ -304,3 +359,24 @@ class AgentManager:
             A list of available agent names.
         """
         return list(self.agents.keys())
+    
+    def get_conversation_history(self, session_id: str) -> List[Tuple[str, str]]:
+        """Get conversation history for a specific session.
+        
+        Args:
+            session_id: The session ID.
+            
+        Returns:
+            List of tuples (role, content) representing the conversation history.
+        """
+        return self.conversation_history.get(session_id, [])
+    
+    def clear_conversation_history(self, session_id: str) -> None:
+        """Clear conversation history for a specific session.
+        
+        Args:
+            session_id: The session ID.
+        """
+        if session_id in self.conversation_history:
+            del self.conversation_history[session_id]
+            logger.info(f"Cleared conversation history for session {session_id}")

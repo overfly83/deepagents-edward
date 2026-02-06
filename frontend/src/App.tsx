@@ -15,23 +15,61 @@ export interface Message {
   isUser: boolean;
   isDebug?: boolean;
   isProcess?: boolean;
+  type?: 'thought' | 'tool_call' | 'tool_response' | 'result' | 'chunk' | 'error';
 }
 
-const MessageItem = ({ message, isUser, isDebug, isProcess }: { message: string; isUser: boolean; isDebug?: boolean; isProcess?: boolean }) => {
+const MessageItem = ({ message, isUser, isDebug, isProcess, type }: { message: string; isUser: boolean; isDebug?: boolean; isProcess?: boolean; type?: 'thought' | 'tool_call' | 'tool_response' | 'result' | 'chunk' | 'error' }) => {
+  let bgColor = 'bg-gray-200';
+  let textColor = 'text-gray-800';
+  let borderColor = '';
+  let icon = '';
+
+  if (isUser) {
+    bgColor = 'bg-indigo-500';
+    textColor = 'text-white';
+  } else if (isDebug) {
+    bgColor = 'bg-blue-100';
+    textColor = 'text-blue-800';
+    borderColor = 'border-l-4 border-blue-500';
+  } else if (isProcess) {
+    bgColor = 'bg-gray-100';
+    textColor = 'text-gray-500';
+  } else if (type === 'thought') {
+    bgColor = 'bg-purple-100';
+    textColor = 'text-purple-800';
+    borderColor = 'border-l-4 border-purple-500';
+    icon = '💭';
+  } else if (type === 'tool_call') {
+    bgColor = 'bg-orange-100';
+    textColor = 'text-orange-800';
+    borderColor = 'border-l-4 border-orange-500';
+    icon = '🔧';
+  } else if (type === 'tool_response') {
+    bgColor = 'bg-green-100';
+    textColor = 'text-green-800';
+    borderColor = 'border-l-4 border-green-500';
+    icon = '📊';
+  } else if (type === 'result') {
+    bgColor = 'bg-blue-100';
+    textColor = 'text-blue-800';
+    borderColor = 'border-l-4 border-blue-500';
+    icon = '✅';
+  } else if (type === 'error') {
+    bgColor = 'bg-red-100';
+    textColor = 'text-red-800';
+    borderColor = 'border-l-4 border-red-500';
+    icon = '❌';
+  }
+
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4 message-fade-in`}>
-      <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${isDebug 
-        ? 'bg-blue-100 text-blue-800 border-l-4 border-blue-500' 
-        : isProcess
-        ? 'bg-gray-100 text-gray-500' 
-        : isUser 
-        ? 'bg-indigo-500 text-white' 
-        : 'bg-gray-200 text-gray-800'}`}>
+      <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${bgColor} ${textColor} ${borderColor}`}>
+        {icon && <span className="mr-2">{icon}</span>}
         {message}
       </div>
     </div>
   );
-};
+}
 
 const TypingIndicator = () => {
   return (
@@ -85,10 +123,13 @@ function App() {
           const data = JSON.parse(event.data);
           logger.debug('Parsed message:', data);
           
-          if (data.type === 'chunk') {
-            logger.debug('Received chunk:', data.content);
+          // Handle different message types with appropriate formatting and typing effect
+          if (data.type === 'chunk' || data.type === 'thought' || data.type === 'tool_call' || data.type === 'tool_response' || data.type === 'result') {
+            logger.debug(`Received ${data.type}:`, data.content);
             setIsTyping(true);
-            addChunk(data.content);
+            
+            // Add with typing effect - pass the message type for proper formatting
+            addChunk(data.content, data.type);
           } else if (data.type === 'complete') {
             logger.debug('Received complete message:', data.content);
             completeStreaming();
@@ -124,7 +165,7 @@ function App() {
             logger.info('Status message received:', data.message);
           } else if (data.type === 'error') {
             logger.error('Error message received:', data.message);
-            setMessages(prev => [...prev, { text: `Error: ${data.message}`, isUser: false }]);
+            setMessages(prev => [...prev, { text: `Error: ${data.message}`, isUser: false, type: 'error' }]);
             setIsTyping(false);
           } else {
             logger.warn('Unknown message type received:', data.type);
@@ -245,6 +286,7 @@ function App() {
                 isUser={message.isUser} 
                 isDebug={message.isDebug} 
                 isProcess={message.isProcess} 
+                type={message.type} 
               />
             ))}
             {isTyping && <TypingIndicator />}

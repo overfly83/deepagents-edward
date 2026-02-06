@@ -8,7 +8,6 @@ import os
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-from langchain_core.tools import tool
 from deepagents import create_deep_agent, MemoryMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
 
@@ -17,7 +16,7 @@ from utils.llm import get_llm
 
 # Import custom logger utility
 from utils.logger import get_logger
-from mcp.weather.weather_tools import get_current_weather, get_weather_forecast
+from tools.weather.weather_tools import get_current_weather, get_weather_forecast
 from agents.agent_base import AgentBase
 
 # Setup logger with blue debug formatting and default source
@@ -73,7 +72,8 @@ class WeatherAgent(AgentBase):
         self.tools = [get_current_weather, get_weather_forecast]
         
         # System prompt for the agent
-        self.system_prompt = """You are a helpful weather assistant. You can help users with:
+        self.system_prompt = """You are a helpful weather assistant.
+        You can help users with:
         1. Getting the current weather for any city in the world
         2. Getting weather forecasts for up to 5 days
 
@@ -82,19 +82,12 @@ class WeatherAgent(AgentBase):
         If a city name is ambiguous, ask the user to specify the country.
         You can use either metric (Celsius) or imperial (Fahrenheit) units - default to metric unless user specifies otherwise.
         """
-        
-        # Create memory middleware for persistent conversation history
-        memory_middleware = MemoryMiddleware(
-            backend=CustomFilesystemMiddleware(),  # Use custom filesystem backend with download_files method
-            sources=["weather_agent_memory"]  # Memory source name for organization
-        )
 
         # Create the Deep Agent with memory capabilities
         self.agent = create_deep_agent(
             model=self.llm,
             tools=self.tools,
             system_prompt=self.system_prompt,
-            middleware=[memory_middleware]  # Add memory middleware
         )
         
         # Initialize conversation history to maintain context between calls

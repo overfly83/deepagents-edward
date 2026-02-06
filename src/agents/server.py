@@ -108,7 +108,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     logger.info(f"WebSocket connection attempt received from {websocket.client} for session: {session_id}")
     
     try:
-        await websocket.accept()
+        await manager.connect(websocket)
         logger.info(f"WebSocket connection accepted for session: {session_id}")
         
         # Send welcome message
@@ -118,8 +118,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         
         while True:
             # Receive raw text data
-            data = await websocket.receive_text()
-            logger.info(f"Received message from session {session_id}: {data[:200]}...")
+            try:
+                data = await websocket.receive_text()
+                logger.info(f"Received message from session {session_id}: {data[:200]}...")
+            except WebSocketDisconnect:
+                manager.disconnect(websocket)
+                logger.info(f"WebSocket connection disconnected for session: {session_id}")
+                break
             
             try:
                 # Parse JSON message
@@ -146,35 +151,28 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         await websocket.send_json({"type":"debug","message":"weather agent streaming started..."})
                         # Process message with agent manager in streaming mode
                         for chunk in agent_manager.stream_handle_message(user_message):
-                            # Handle plan chunk
-                            if "type" in chunk and chunk["type"] == "plan":
-                                # Send the plan to frontend
-                                await websocket.send_json({"type": "plan", "content": chunk["content"]})
-                                logger.info(f"Sent plan to session {session_id}")
-                            elif "messages" in chunk:
-                                # Handle regular message chunks
-                                for message in chunk["messages"]:
-                                    content = None
-                                    # Handle different message formats
-                                    if hasattr(message, "content"):
-                                        content = message.content
-                                    elif isinstance(message, dict) and "content" in message:
-                                        content = message["content"]
-                                    
-                                    if content:
-                                        # Send the chunk as-is
-                                        await websocket.send_json({"type": "chunk", "content": content})
-                                        # Update the full_response
-                                        if full_response == "":
-                                            full_response = content
-                                        elif content.startswith(full_response):
-                                            full_response = content
-                                        else:
-                                            full_response += content
+                            logger.debug(f"Received chunk: {chunk}")
+                            
+                            # Handle different message types
+                            if "type" in chunk and "content" in chunk:
+                                msg_type = chunk["type"]
+                                content = chunk["content"]
+                                
+                                # Send the chunk with its type to frontend
+                                await websocket.send_json(chunk)
+                                logger.info(f"Sent {msg_type} to session {session_id}: {content[:100]}...")
+                                
+                                # Update full_response only for actual content chunks
+                                if msg_type == "chunk":
+                                    if full_response == "":
+                                        full_response = content
+                                    elif content.startswith(full_response):
+                                        full_response = content
+                                    else:
+                                        full_response += content
                         
                         # Send complete response after streaming
-                        if full_response:
-                            await websocket.send_json({"type": "complete", "content": "query complete."})
+                        await websocket.send_json({"type": "complete", "content": "query complete."})
                     except Exception as stream_error:
                         # Fall back to non-streaming mode if streaming fails
                         logger.error(f"Streaming error: {stream_error}")

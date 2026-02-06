@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 # Import custom logger utility
 from utils.logger import get_logger
-from mcp.weather.model import CurrentWeather, DailyForecast
+from tools.weather.model import CurrentWeather, DailyForecast
 
 # Setup logger with blue debug formatting and default source
 logger = get_logger(__name__, source='WEATHER_MCP')

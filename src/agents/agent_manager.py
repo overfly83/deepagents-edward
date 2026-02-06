@@ -1,345 +1,352 @@
 import uuid
 from typing import Dict, List, Optional, Any, Tuple
-from agents.agent_base import AgentBase
-from agents.weather.weather_agent import WeatherAgent
+from deepagents import create_deep_agent
+from deepagents.backends import FilesystemBackend, CompositeBackend
+from langchain.agents.middleware import TodoListMiddleware
+from langchain_core.messages import HumanMessage
+
 from utils.logger import get_logger
 from utils.llm import get_llm
+from tools.weather.weather_tools import get_current_weather, get_weather_forecast
+from agents.weather.weather_agent import WeatherAgent
+
+from deepagents.middleware.subagents import SubAgentMiddleware
 
 
 logger = get_logger(__name__, source=__name__)
 
 
 class AgentManager:
-    """Manages agents and handles intent detection and task dispatching."""
+    """A generic agent manager built on DeepAgents framework with advanced capabilities:
+    - Planning and task decomposition using todo lists
+    - Context management with file system tools
+    - Subagent spawning for specialized tasks
+    - Long-term memory across sessions
+    - Open intent detection not limited to specific agent intents
+    """
     
-    def __init__(self):
-        """Initialize the AgentManager with available agents."""
+    def __init__(self, model: str = "glm-4-flash", temperature: float = 0.1):
+        """Initialize the AgentManager with DeepAgents framework and advanced capabilities."""
         
-        # Initialize LLM for intent detection
-        self._initialize_llm()
+        # Initialize LLM for the agent manager
+        self.llm = get_llm(provider="zhipu", model=model, temperature=temperature)
         
-        # Initialize all available agents
-        self.agents: Dict[str, AgentBase] = {
+        # Initialize filesystem backend
+        filesystem_backend = FilesystemBackend(root_dir=".agent_manager_filesystem")
+        
+        # Create CompositeBackend for handling different backend operations
+        self.composite_backend = CompositeBackend(
+            default=filesystem_backend,
+            routes={
+                "/memories/": filesystem_backend,
+                "/files/": filesystem_backend
+            }
+        )
+        
+        # Initialize subagent middleware for spawning specialized agents
+        self.subagent_middleware = SubAgentMiddleware(default_model=self.llm)
+        
+        # Initialize todo list middleware for planning capabilities
+        self.todo_middleware = TodoListMiddleware()
+
+        # Define available tools including weather tools and filesystem operations
+        self.tools = [
+            get_current_weather,
+            get_weather_forecast
+        ]
+        
+        # Initialize all available specialized agents
+        self.agents: Dict[str, Any] = {
             "weather": WeatherAgent()
         }
         
-        # Get all supported intents from agents
-        self.supported_intents = self._get_all_supported_intents()
+        # System prompt for the generic agent manager
+        self.system_prompt = """
+        You are a helpful and capable agent manager. Your core capabilities include:
         
-        # Conversation memory management
-        self.conversation_history: Dict[str, List[Tuple[str, str]]] = {}
+        1. Planning and Task Decomposition
+        - Use the todo list system to break down complex tasks into discrete steps
+        - Track progress and adapt plans as new information emerges
+        - Use commands like: add todo, list todos, complete todo, update todo
         
-        logger.info(f"AgentManager initialized with supported intents: {self.supported_intents}")
-    
-    def _initialize_llm(self):
-        """Initialize the LLM for intent detection."""
-        try:
-            # Use centralized LLM utility for intent detection
-            self.llm = get_llm(
-                provider="zhipu",
-                model="glm-4-flash",
-                temperature=0
-            )
-            
-            self.llm_available = True
-            logger.info("LLM initialized for intent detection")
-        except Exception as e:
-            logger.error(f"Failed to initialize LLM: {e}")
-            logger.error(f"Error type: {type(e).__name__}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # Fallback to pattern matching if LLM fails
-            self.llm_available = False
-            logger.warning("Falling back to pattern-based intent detection")
-    
-    def _get_all_supported_intents(self) -> List[str]:
-        """Get all supported intents from all available agents.
+        2. Context Management
+        - Use file system tools (ls, read_file, write_file, edit_file) to manage context
+        - Offload large context to memory to prevent context window overflow
+        - Work with variable-length tool results efficiently
         
-        Returns:
-            List of all supported intents.
+        3. Subagent Spawning
+        - Use the task tool to spawn specialized subagents for specific tasks
+        - Keep your context clean while delegating to experts
+        - Examples: task("weather", "What's the weather in Beijing tomorrow?")
+        
+        5. Intent Detection
+        - Analyze user messages to understand their intent
+        - Determine if you can handle it directly or need to delegate to a specialized agent
+        - Be flexible and don't limit yourself to predefined intents
+        
+        When users ask questions, first understand what they need, then decide on the best approach:
+        - If it's a simple request you can handle directly, do so
+        - If it's complex, break it down into steps using the todo list
+        - If it requires specialized knowledge, spawn a subagent
+        - If you need to work with files, use the filesystem tools
+        - Always keep track of important information in memory
+        
+        Be conversational, helpful, and guide users through the process of achieving their goals.
         """
-        all_intents = set()
-        for agent in self.agents.values():
-            intents = agent.get_supported_intents()
-            all_intents.update(intents)
-        return list(all_intents)
-    
-    def detect_intent(self, message: str) -> Optional[str]:
-        """Detect the intent from a user message using LLM.
         
-        Args:
-            message: The user's message.
-            
-        Returns:
-            The detected intent or None if no intent is detected.
-        """
-        if not message:
-            return None
+        # Convert agents dict to the format expected by deepagents (list of dicts with name, description, and system_prompt)
+        formatted_subagents = []
+        for name, agent in self.agents.items():
+            # Extract the first line from system_prompt as description
+            description = agent.system_prompt.split('\n')[0].strip()
+            formatted_subagents.append({
+                'name': name,
+                'description': description,
+                'system_prompt': agent.system_prompt
+            })
         
-        # Check if LLM is available
-        if not self.llm_available:
-            logger.info(f"Using fallback intent detection for message: {message}")
-            return self._fallback_intent_detection(message)
+        logger.debug(f"Formatted subagents: {formatted_subagents}")
+        logger.debug(f"Type of formatted_subagents: {type(formatted_subagents)}")
+        if formatted_subagents:
+            logger.debug(f"First subagent type: {type(formatted_subagents[0])}")
+            logger.debug(f"First subagent keys: {list(formatted_subagents[0].keys()) if isinstance(formatted_subagents[0], dict) else 'N/A'}")
         
-        try:
-            # Create a prompt for intent detection
-            prompt = f"""
-            You are an intent detection system. Your task is to determine the intent of the user's message.
-            
-            Available intents:
-            {', '.join(self.supported_intents)}
-            
-            If the message doesn't match any of the above intents, return 'None'.
-            
-            User message: {message}
-            
-            Only return the intent name, nothing else.
-            """
-            
-            logger.debug(f"Sending prompt to LLM: {prompt[:100]}...")
-            
-            # Get response from LLM
-            response = self.llm.invoke(prompt)
-            detected_intent = response.content.strip()
-            
-            logger.info(f"LLM intent detection - Message: {message}, Detected Intent: {detected_intent}")
-            
-            # Validate the detected intent
-            if detected_intent in self.supported_intents:
-                return detected_intent
-            elif detected_intent.lower() == "none":
-                return None
-            else:
-                logger.warning(f"LLM returned unknown intent: {detected_intent}, falling back to keyword matching")
-                return self._fallback_intent_detection(message)
-                
-        except Exception as e:
-            logger.error(f"Error during intent detection: {e}")
-            logger.error(f"Error type: {type(e).__name__}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # Fallback to basic keyword matching for robustness
-            return self._fallback_intent_detection(message)
-    
-    def _fallback_intent_detection(self, message: str) -> Optional[str]:
-        """Fallback intent detection using simple keyword matching.
+        # Create the Deep Agent with all middleware and capabilities
+        self.deep_agent = create_deep_agent(
+            model=self.llm,
+            system_prompt=self.system_prompt,
+            subagents=formatted_subagents,
+        )
         
-        Args:
-            message: The user's message.
-            
-        Returns:
-            The detected intent or None if no intent is detected.
-        """
-        message_lower = message.lower()
-        
-        # Basic keyword matching as fallback
-        intent_keywords = {
-            "weather_inquiry": [
-                "weather", "temperature", "forecast", "rain", "sunny", "cloudy", "windy", "storm",
-                "天气", "温度", "预报", "下雨", "晴天", "多云", "有风", "风暴", "阴天", "小雨", "大雨", "雪", "雾霾"
-            ]
-        }
-        
-        for intent, keywords in intent_keywords.items():
-            for keyword in keywords:
-                if keyword in message_lower:
-                    return intent
-        
-        return None
-    
-    def get_agent_for_intent(self, intent: str) -> Optional[AgentBase]:
-        """Get the appropriate agent for a given intent.
-        
-        Args:
-            intent: The detected intent.
-            
-        Returns:
-            The appropriate agent or None if no agent handles the intent.
-        """
-        for agent_name, agent in self.agents.items():
-            if intent in agent.get_supported_intents():
-                return agent_name, agent
-        
-        return None
-    
-    def handle_message(self, message: str,session_id: Optional[str] = None) -> Any:
-        """Handle a user message by following the standard workflow:
-        1. Detect user's intent
-        2. Detect resulting agent
-        3. Plan task with conversation history
+        logger.info("AgentManager initialized with DeepAgents framework")
+        logger.info("Enabled capabilities: Planning, Context Management, Subagent Spawning")
 
-        4. Dispatch to appropriate agent with proper logging
+    
+    def _process_message(self, message: str, session_id: str) -> dict:
+        """Process the message and return the result.
         
         Args:
             message: The user's message.
+            session_id: The session ID.
+            
+        Returns:
+            The processed result as a dictionary.
         """
-        logger.info(f"=== Starting Standard Workflow ===")
+        try:
+            # Step 2: Handle message using DeepAgents framework
+            logger.info("Step 2: Processing with DeepAgents framework...")
+            
+            # Use the DeepAgent to process the message directly with correct input format
+            response = self.deep_agent.invoke({"messages": [HumanMessage(content=message)]})
+            
+            logger.info("Step 3: DeepAgent response generated")
+            logger.info(f"Final Result: {response[:100]}...")
+            
+            # Extract text from response dictionary if needed
+            if isinstance(response, dict):
+                response = response.get("output", response.get("content", str(response)))
+            
+            return {
+                "response": response,
+                "session_id": session_id
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            return {
+                "response": f"I'm sorry, there was an error processing your request: {str(e)}",
+                "error": str(e),
+                "session_id": session_id
+            }
+    
+    def handle_message(self, message: str, session_id: Optional[str] = None, return_steps: bool = False) -> Any:
+        """Handle a user message using the DeepAgents framework with advanced capabilities.
+        
+        Args:
+            message: The user's message.
+            session_id: Optional session ID to maintain context.
+            return_steps: Whether to return step-by-step updates as a generator.
+            
+        Returns:
+            If return_steps is True: A generator yielding step-by-step updates.
+            Otherwise: The response to the user's message as a dictionary.
+        """
+        logger.info(f"=== Starting DeepAgents Workflow ===")
         logger.info(f"User Message: {message}")
         
-        # Store result for final response
-        final_result = None
-
-        # Step 1: Detect user's intent
-        intent = self.detect_intent(message)
-        logger.info(f"Step 1: Intent detected: {intent}")
-
-        if not intent:
-            final_result = {
-                "response": "I'm sorry, I don't understand what you're asking. Could you please rephrase?"
-            }
-            logger.warning("Result: No intent detected")
-            # Intent detection failed
-            logger.info(f"=== Workflow Complete ===")
-            return final_result
-        else:
-            # Step 2: Looking for appropriate agent
-            logger.info("Step 2: Looking for appropriate agent...")
-            agent_name, agent = self.get_agent_for_intent(intent)
+        # Generate a session ID if not provided
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            logger.info(f"Generated new session ID: {session_id}")
+        
+        # Handle step-by-step mode
+        if return_steps:
+            return self._handle_message_with_steps(message, session_id)
+        
+        # Normal return mode
+        final_result = self._process_message(message, session_id)
+        logger.info(f"=== Workflow Completed ===")
+        return final_result
+        
+    def _handle_message_with_steps(self, message: str, session_id: str) -> Generator[dict, None, None]:
+        """Handle a message and return step-by-step updates as a generator.
+        
+        Args:
+            message: The user's message.
+            session_id: The session ID.
             
-            if not agent:
-                final_result = {
-                    "response": f"I'm sorry, I don't have an agent that can handle '{intent}' requests."
-                }
-                logger.warning(f"Result: No agent found for intent '{intent}'")
-                logger.info(f"=== Workflow Complete ===")
-                return final_result
-            
-            logger.info(f"Step 2: Found agent: {agent_name}")
-
-            # Step 3: Plan task
-            logger.info("Step 3: Planning task...")
-            
-            # Get conversation context for this session
-            conversation_context = "\n".join([f"{role}: {content}" for role, content in self.conversation_history[session_id][-5:]])  # Last 5 messages
-            full_message = f"Conversation history:\n{conversation_context}\n\nNew user message: {message}"
-            
-            agent.plan_task(full_message)
-
-            # Step 4: Agent processing
-            logger.info("Step 4: Processing with agent...")
-            
-            logger.debug(f"Full message with context for agent: {full_message[:100]}...")
-            response = agent.chat(full_message)
-
-            # Agent logs final result
-            agent.log_final_result(response)
-            final_result = {"response": response}
-            
-            # Update conversation history with assistant response
-            self.conversation_history[session_id].append(("assistant", response))
-            
-            logger.info("Step 4: Agent processing complete")
-            return final_result
-
+        Yields:
+            Step-by-step updates as dictionaries.
+        """
+        # Step 1: Yield initialization
+        yield {
+            "step_number": 1,
+            "step_name": "init",
+            "step_description": "Initializing message processing",
+            "type": "step",
+            "debug": {"session_id": session_id, "message": message[:50] + "..."}
+        }
+        
+        # Step 2: Yield processing start
+        yield {
+            "step_number": 2,
+            "step_name": "deep_agent_processing",
+            "step_description": "Processing message with DeepAgent",
+            "type": "step",
+            "debug": {"status": "started"}
+        }
+        
+        # Process the message
+        final_result = self._process_message(message, session_id)
+        
+        # Step 3: Yield completion
+        yield {
+            "step_number": 3,
+            "step_name": "complete",
+            "step_description": "Message processing complete",
+            "type": "complete",
+            "result": final_result
+        }
+        
     def stream_handle_message(self, message: str, session_id: Optional[str] = None):
-        """Handle a user message by detecting intent and routing to the appropriate agent with streaming.
+        """Handle a user message and stream the response using the DeepAgents framework.
         
         Args:
             message: The user's message.
             session_id: Optional session ID to maintain context.
             
         Yields:
-            Response chunks as they are generated.
+            Response chunks as dictionary objects with appropriate structure for the server.
         """
+        logger.info(f"=== Starting DeepAgents Streaming Workflow ===")
+        logger.info(f"User Message: {message}")
+        
         # Generate a session ID if not provided
         if not session_id:
             session_id = str(uuid.uuid4())
             logger.info(f"Generated new session ID: {session_id}")
         
-        # Initialize conversation history for new sessions
-        if session_id not in self.conversation_history:
-            self.conversation_history[session_id] = []
-            logger.info(f"Initialized conversation history for session {session_id}")
-        
-        # Step 1: Detecting intent
-        logger.info("Step 1: Detecting user intent...")
-        
-        # Detect intent
-        intent = self.detect_intent(message)
-        
-        if not intent:
-            response = {"messages": [{"content": "I'm sorry, I don't understand what you're asking. Could you please rephrase?"}]}
-            # Add to conversation history
-            self.conversation_history[session_id].append(("user", message))
-            self.conversation_history[session_id].append(("assistant", response["messages"][0]["content"]))
-            yield response
-            return
-        
-        logger.info(f"Step 1: Intent detected: {intent}")
-        
-        # Step 2: Looking for appropriate agent
-        logger.info("Step 2: Looking for appropriate agent...")
-        
-        # Get the appropriate agent
-        agent_name, agent = self.get_agent_for_intent(intent)
-        
-        if not agent:
-            response = {"messages": [{"content": f"I'm sorry, I don't have an agent that can handle '{intent}' requests."}]}
-            # Add to conversation history
-            self.conversation_history[session_id].append(("user", message))
-            self.conversation_history[session_id].append(("assistant", response["messages"][0]["content"]))
-            yield response
-            return
-        
-        logger.info(f"Step 2: Found agent: {agent_name}")
-        
-        # Step 3: Plan task
-        logger.info("Step 3: Planning task...")
-        
-        # Get conversation context for this session
-        conversation_context = "\n".join([f"{role}: {content}" for role, content in self.conversation_history[session_id][-5:]])  # Last 5 messages
-        full_message = f"Conversation history:\n{conversation_context}\n\nNew user message: {message}"
-        
-        agent.plan_task(full_message)
-        
-        # Step 4: Agent processing
-        logger.info("Step 4: Processing with agent...")
-        
-        logger.debug(f"Full message with context for agent: {full_message[:100]}...")
-        
-        # Use the agent to get a streaming response
-        response_chunks = []
-        for chunk in agent.stream_chat(full_message):
-            response_chunks.append(chunk)
-            yield chunk
-        
-        # Extract final response to update conversation history
-        if response_chunks:
-            last_chunk = response_chunks[-1]
-            if isinstance(last_chunk, dict) and "messages" in last_chunk:
-                for msg in last_chunk["messages"]:
-                    if "content" in msg:
-                        self.conversation_history[session_id].append(("user", message))
-                        self.conversation_history[session_id].append(("assistant", msg["content"]))
-                        logger.info(f"Updated conversation history for session {session_id}")
-                        break
-        
-        logger.info("Step 4: Processing with agent complete")
-    
-    async def run_agent(self, agent_name: str, *args, **kwargs) -> Dict[str, Any]:
-        """Run a specific agent with provided parameters.
-        
-        Args:
-            agent_name: The name of the agent to run.
-            *args: Variable length argument list.
-            **kwargs: Arbitrary keyword arguments.
+        try:
+            # Stream response from the DeepAgent directly with correct input format
+            full_response = ""
+            for chunk in self.deep_agent.stream({"messages": [HumanMessage(content=message)]}):
+                logger.debug(f"Raw chunk received: {chunk}")
+                
+                if isinstance(chunk, dict):
+                    # Categorize the chunk based on its content
+                    if any(key.endswith('.before_agent') or key.endswith('.after_agent') for key in chunk):
+                        # This is a middleware thought/processing message
+                        middleware_key = list(chunk.keys())[0]
+                        yield {
+                            "type": "thought",
+                            "content": f"{middleware_key}: {chunk[middleware_key]}"
+                        }
+                    elif 'model' in chunk:
+                        # This is a model response (could include tool calls)
+                        model_data = chunk['model']
+                        if 'messages' in model_data:
+                            for msg in model_data['messages']:
+                                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                    # This is a tool call message
+                                    tool_call_info = []
+                                    for tool_call in msg.tool_calls:
+                                        if hasattr(tool_call, 'name') and hasattr(tool_call, 'args'):
+                                            tool_call_info.append(f"{tool_call.name}({tool_call.args})")
+                                    if tool_call_info:
+                                        yield {
+                                            "type": "tool_call",
+                                            "content": f"Tool calls: {', '.join(tool_call_info)}"
+                                        }
+                                elif hasattr(msg, 'content') and msg.content:
+                                    # This is a regular model response with content
+                                    chunk_text = msg.content
+                                    full_response += chunk_text
+                                    yield {
+                                        "type": "chunk",
+                                        "content": chunk_text
+                                    }
+                    elif 'tools' in chunk:
+                        # This is a tool response
+                        tool_data = chunk['tools']
+                        yield {
+                            "type": "tool_response",
+                            "content": f"Tool response: {tool_data}"
+                        }
+                    elif 'output' in chunk or 'content' in chunk:
+                        # This is a direct output/content chunk
+                        chunk_text = chunk.get("output", chunk.get("content", str(chunk)))
+                        full_response += chunk_text
+                        yield {
+                            "type": "chunk",
+                            "content": chunk_text
+                        }
+                    else:
+                        # Fallback for other dictionary chunks
+                        chunk_text = str(chunk)
+                        full_response += chunk_text
+                        yield {
+                            "type": "chunk",
+                            "content": chunk_text
+                        }
+                else:
+                    # Fallback for non-dictionary chunks
+                    chunk_text = str(chunk)
+                    full_response += chunk_text
+                    yield {
+                        "type": "chunk",
+                        "content": chunk_text
+                    }
             
-        Returns:
-            The result of the agent's execution as a dictionary.
-        """
-        if agent_name not in self.agents:
-            return {"error": f"Agent '{agent_name}' not found."}
+            logger.info(f"Step 3: Streaming completed")
+            logger.info(f"Final Result: {full_response[:100]}...")
+            
+            # Yield final result message
+            if full_response:
+                yield {
+                    "type": "result",
+                    "content": full_response
+                }
+            
+        except Exception as e:
+            logger.error(f"Error streaming response: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            error_response = f"I'm sorry, there was an error processing your request: {str(e)}"
+            
+            # Yield error message
+            yield {
+                "type": "error",
+                "content": error_response
+            }
         
-        agent = self.agents[agent_name]
-        
-        # Plan task if message is provided in args or kwargs
-        message = args[0] if args else kwargs.get('message', '')
-        if message:
-            logger.info("Planning task...")
-            agent.plan_task(message)
-        
-        return await agent.run(*args, **kwargs)
-    
+        logger.info(f"=== Streaming Workflow Completed ===")
+
+
     def get_available_agents(self) -> List[str]:
         """Get a list of available agents.
         
@@ -347,24 +354,57 @@ class AgentManager:
             A list of available agent names.
         """
         return list(self.agents.keys())
-    
-    def get_conversation_history(self, session_id: str) -> List[Tuple[str, str]]:
-        """Get conversation history for a specific session.
+
+
+    def get_todos(self, session_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get the todo list for a session.
         
         Args:
             session_id: The session ID.
+            status: Optional filter by status (pending, completed).
             
         Returns:
-            List of tuples (role, content) representing the conversation history.
+            List of todo items.
         """
-        return self.conversation_history.get(session_id, [])
+        return self.todo_middleware.list_todos(session_id, status)
     
-    def clear_conversation_history(self, session_id: str) -> None:
-        """Clear conversation history for a specific session.
+    def add_todo(self, session_id: str, task: str, priority: str = "medium") -> Dict[str, Any]:
+        """Add a todo item to the session's todo list.
         
         Args:
             session_id: The session ID.
+            task: The task description.
+            priority: The priority level (low, medium, high).
+            
+        Returns:
+            The created todo item.
         """
-        if session_id in self.conversation_history:
-            del self.conversation_history[session_id]
-            logger.info(f"Cleared conversation history for session {session_id}")
+        return self.todo_middleware.add_todo(session_id, task, priority)
+    
+    def complete_todo(self, session_id: str, todo_id: str) -> bool:
+        """Mark a todo item as completed.
+        
+        Args:
+            session_id: The session ID.
+            todo_id: The ID of the todo item to complete.
+            
+        Returns:
+            True if successful, False otherwise.
+        """
+        return self.todo_middleware.update_todo_status(session_id, todo_id, "completed")
+    
+    def update_todo(self, session_id: str, todo_id: str, task: Optional[str] = None, 
+                   priority: Optional[str] = None, status: Optional[str] = None) -> bool:
+        """Update a todo item.
+        
+        Args:
+            session_id: The session ID.
+            todo_id: The ID of the todo item to update.
+            task: Optional updated task description.
+            priority: Optional updated priority.
+            status: Optional updated status.
+            
+        Returns:
+            True if successful, False otherwise.
+        """
+        return self.todo_middleware.update_todo(session_id, todo_id, task, priority, status)

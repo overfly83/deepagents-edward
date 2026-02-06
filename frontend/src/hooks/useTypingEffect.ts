@@ -10,7 +10,7 @@ interface TypingEffectConfig {
 }
 
 interface TypingEffectReturn {
-  addChunk: (chunk: string) => void;
+  addChunk: (chunk: string, type?: 'thought' | 'tool_call' | 'tool_response' | 'result' | 'chunk' | 'error' | 'debug' | 'process') => void;
   completeStreaming: () => void;
   resetStreaming: () => void;
   isReceivingChunks: boolean;
@@ -19,12 +19,18 @@ interface TypingEffectReturn {
 export const useTypingEffect = ({ onMessagesUpdate }: TypingEffectConfig): TypingEffectReturn => {
   const [isReceivingChunks, setIsReceivingChunks] = useState(false);
   
-  // Buffer for streaming chunks and current display text
-  const streamBufferRef = useRef<string>('');
+  // Buffer for streaming chunks with their types
+  const streamBufferRef = useRef<{ content: string; type?: string }[]>([]);
+  const currentMessageTypeRef = useRef<string | undefined>(undefined);
+  const streamingMessageIndexRef = useRef<number>(-1);
   const streamDisplayRef = useRef<string>('');
   const animationFrameRef = useRef<number>();
   const lastCharTimeRef = useRef<number>(0);
-  const streamingMessageIndexRef = useRef<number>(-1);
+
+  // Simple logging utility
+  const logger = {
+    debug: (message: string, ...args: any[]) => console.debug('[useTypingEffect]', message, ...args)
+  };
 
   // Typing animation effect for streaming chunks
   useEffect(() => {
@@ -36,21 +42,76 @@ export const useTypingEffect = ({ onMessagesUpdate }: TypingEffectConfig): Typin
       const typingSpeed = MIN_TYPING_SPEED + Math.random() * (MAX_TYPING_SPEED - MIN_TYPING_SPEED);
       const charInterval = 1000 / typingSpeed; // milliseconds per character
       
-      // Check if enough time has passed to type the next character
+      // Check if there are chunks to process
       if (timeSinceLastChar >= charInterval && streamBufferRef.current.length > 0) {
-        // Take the next character from the buffer
-        const nextChar = streamBufferRef.current.charAt(0);
-        streamBufferRef.current = streamBufferRef.current.slice(1);
+        // Get the first chunk from the buffer
+        const currentChunk = streamBufferRef.current[0];
+        
+        // If the message type changed, create a new message
+        if (currentChunk.type !== currentMessageTypeRef.current) {
+          logger.debug('Message type changed from', currentMessageTypeRef.current, 'to', currentChunk.type);
+          
+          // Complete previous message if it exists and it's a streaming message (has type property)
+          if (streamingMessageIndexRef.current !== -1) {
+            onMessagesUpdate((prevMessages) => {
+              const newMessages = [...prevMessages];
+              // Only complete messages that were created by the streaming system (have type property)
+              // Ensure the message exists at the specified index
+              const messageIndex = streamingMessageIndexRef.current;
+              if (messageIndex >= 0 && messageIndex < newMessages.length && newMessages[messageIndex].type) {
+                newMessages[messageIndex] = {
+                  ...newMessages[messageIndex],
+                  text: streamDisplayRef.current
+                };
+              }
+              return newMessages;
+            });
+          }
+          
+          // Create new message for the new type
+          streamDisplayRef.current = '';
+          
+          // Create new message with appropriate type
+          const newMessage: Message = {
+            text: '',
+            isUser: false,
+            type: currentChunk.type as any
+          };
+          
+          onMessagesUpdate((prevMessages) => {
+            const newMessages = [...prevMessages];
+            newMessages.push(newMessage);
+            streamingMessageIndexRef.current = newMessages.length - 1;
+            return newMessages;
+          });
+          
+          currentMessageTypeRef.current = currentChunk.type;
+        }
+        
+        // Take the next character from the current chunk
+        const nextChar = currentChunk.content.charAt(0);
         streamDisplayRef.current += nextChar;
+        
+        // Update the current chunk in the buffer
+        currentChunk.content = currentChunk.content.slice(1);
+        
+        // If the current chunk is empty, remove it from the buffer
+        if (currentChunk.content.length === 0) {
+          streamBufferRef.current.shift();
+        }
         
         // Update the message with the new character
         onMessagesUpdate((prevMessages) => {
           const newMessages = [...prevMessages];
-          if (streamingMessageIndexRef.current !== -1 && streamingMessageIndexRef.current < newMessages.length) {
-            newMessages[streamingMessageIndexRef.current] = {
-              ...newMessages[streamingMessageIndexRef.current],
-              text: streamDisplayRef.current
-            };
+          const messageIndex = streamingMessageIndexRef.current;
+          if (messageIndex !== -1 && messageIndex < newMessages.length) {
+            // Only update messages that were created by the streaming system (have type property)
+            if (newMessages[messageIndex].type) {
+              newMessages[messageIndex] = {
+                ...newMessages[messageIndex],
+                text: streamDisplayRef.current
+              };
+            }
           }
           return newMessages;
         });
@@ -64,23 +125,30 @@ export const useTypingEffect = ({ onMessagesUpdate }: TypingEffectConfig): Typin
         animationFrameRef.current = requestAnimationFrame(typeNextChar);
       } else {
         // Animation complete
-        onMessagesUpdate((prevMessages) => {
-          const newMessages = [...prevMessages];
-          if (streamingMessageIndexRef.current !== -1 && streamingMessageIndexRef.current < newMessages.length) {
-            newMessages[streamingMessageIndexRef.current] = {
-              ...newMessages[streamingMessageIndexRef.current],
-            };
-          }
-          return newMessages;
-        });
+        if (streamingMessageIndexRef.current !== -1) {
+          onMessagesUpdate((prevMessages) => {
+            const newMessages = [...prevMessages];
+            // Only complete messages that were created by the streaming system (have type property)
+            // Ensure the message exists at the specified index
+            const messageIndex = streamingMessageIndexRef.current;
+            if (messageIndex >= 0 && messageIndex < newMessages.length && newMessages[messageIndex].type) {
+              newMessages[messageIndex] = {
+                ...newMessages[messageIndex],
+                text: streamDisplayRef.current
+              };
+            }
+            return newMessages;
+          });
+        }
         
         // Reset streaming state
         streamingMessageIndexRef.current = -1;
         streamDisplayRef.current = '';
+        currentMessageTypeRef.current = undefined;
       }
     };
     
-    // Start the animation if not already running
+    // Start the animation if not already running and there's content to stream
     if (!animationFrameRef.current && (isReceivingChunks || streamBufferRef.current.length > 0)) {
       lastCharTimeRef.current = performance.now();
       animationFrameRef.current = requestAnimationFrame(typeNextChar);
@@ -96,23 +164,12 @@ export const useTypingEffect = ({ onMessagesUpdate }: TypingEffectConfig): Typin
   }, [isReceivingChunks, onMessagesUpdate]);
 
   /**
-   * Adds a chunk of text to the streaming buffer
+   * Adds a chunk of text to the streaming buffer with its type
    */
-  const addChunk = (chunk: string) => {
+  const addChunk = (chunk: string, type?: 'thought' | 'tool_call' | 'tool_response' | 'result' | 'chunk' | 'error' | 'debug' | 'process') => {
+    logger.debug('Adding chunk to buffer:', chunk, 'type:', type);
+    streamBufferRef.current.push({ content: chunk, type });
     setIsReceivingChunks(true);
-    
-    // Buffer the chunk instead of immediately appending
-    streamBufferRef.current += chunk;
-
-    // If this is the first chunk, create a new message
-    if (streamingMessageIndexRef.current === -1) {
-      onMessagesUpdate((prevMessages) => {
-        const newMessages = [...prevMessages];
-        newMessages.push({ text: '', isUser: false});
-        streamingMessageIndexRef.current = newMessages.length - 1;
-        return newMessages;
-      });
-    }
   };
 
   /**
@@ -126,14 +183,17 @@ export const useTypingEffect = ({ onMessagesUpdate }: TypingEffectConfig): Typin
    * Resets all streaming state
    */
   const resetStreaming = () => {
-    streamBufferRef.current = '';
+    streamBufferRef.current = [];
     streamDisplayRef.current = '';
     streamingMessageIndexRef.current = -1;
+    currentMessageTypeRef.current = undefined;
     
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = undefined;
     }
+    
+    setIsReceivingChunks(false);
   };
 
   return {

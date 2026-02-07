@@ -1,99 +1,37 @@
 import { useState, useEffect, useRef } from 'react';
 import './index.css';
-import { useTypingEffect } from './hooks/useTypingEffect';
+import { useDecoupledTypingEffect } from './hooks/useDecoupledTypingEffect';
+import { MessageManager } from './components/MessageManager';
 
 // Define a simple logging utility
 const logger = {
-  info: (message: string, ...args: any[]) => console.info('[App]', message, ...args),
-  debug: (message: string, ...args: any[]) => console.debug('[App]', message, ...args),
-  warn: (message: string, ...args: any[]) => console.warn('[App]', message, ...args),
-  error: (message: string, ...args: any[]) => console.error('[App]', message, ...args)
+  info: (message: string, ...args: any[]) => console.info('[AppDecoupled]', message, ...args),
+  debug: (message: string, ...args: any[]) => console.debug('[AppDecoupled]', message, ...args),
+  warn: (message: string, ...args: any[]) => console.warn('[AppDecoupled]', message, ...args),
+  error: (message: string, ...args: any[]) => console.error('[AppDecoupled]', message, ...args)
 };
 
-export interface Message {
-  text: string;
-  isUser: boolean;
-  isDebug?: boolean;
-  isProcess?: boolean;
-  type?: 'thought' | 'tool_call' | 'tool_response' | 'result' | 'chunk' | 'error';
+// Define the message data structure for all types
+interface Message {
+  type: string;
+  content: string;
 }
 
-const MessageItem = ({ message, isUser, isDebug, isProcess, type }: { message: string; isUser: boolean; isDebug?: boolean; isProcess?: boolean; type?: 'thought' | 'tool_call' | 'tool_response' | 'result' | 'chunk' | 'error' }) => {
-  let bgColor = 'bg-gray-200';
-  let textColor = 'text-gray-800';
-  let borderColor = '';
-  let icon = '';
+type MessageData = Message[];
 
-  if (isUser) {
-    bgColor = 'bg-indigo-500';
-    textColor = 'text-white';
-  } else if (isDebug) {
-    bgColor = 'bg-blue-100';
-    textColor = 'text-blue-800';
-    borderColor = 'border-l-4 border-blue-500';
-  } else if (isProcess) {
-    bgColor = 'bg-gray-100';
-    textColor = 'text-gray-500';
-  } else if (type === 'thought') {
-    bgColor = 'bg-purple-100';
-    textColor = 'text-purple-800';
-    borderColor = 'border-l-4 border-purple-500';
-    icon = '💭';
-  } else if (type === 'tool_call') {
-    bgColor = 'bg-orange-100';
-    textColor = 'text-orange-800';
-    borderColor = 'border-l-4 border-orange-500';
-    icon = '🔧';
-  } else if (type === 'tool_response') {
-    bgColor = 'bg-green-100';
-    textColor = 'text-green-800';
-    borderColor = 'border-l-4 border-green-500';
-    icon = '📊';
-  } else if (type === 'result') {
-    bgColor = 'bg-blue-100';
-    textColor = 'text-blue-800';
-    borderColor = 'border-l-4 border-blue-500';
-    icon = '✅';
-  } else if (type === 'error') {
-    bgColor = 'bg-red-100';
-    textColor = 'text-red-800';
-    borderColor = 'border-l-4 border-red-500';
-    icon = '❌';
-  }
-
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4 message-fade-in`}>
-      <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${bgColor} ${textColor} ${borderColor}`}>
-        {icon && <span className="mr-2">{icon}</span>}
-        {message}
-      </div>
-    </div>
-  );
-}
-
-const TypingIndicator = () => {
-  return (
-    <div className="flex justify-start mb-4">
-      <div className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg typing-indicator">
-        <span></span>
-        <span></span>
-        <span></span>
-      </div>
-    </div>
-  );
-};
-
-function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
+function AppDecoupled() {
+  // State for all message types - now using an array to preserve order
+  const [messages, setMessages] = useState<MessageData>([]);
+  
   const [inputValue, setInputValue] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'error'>('disconnected');
   const messageContainerRef = useRef<HTMLDivElement>(null);
+  const [hasSentMessage, setHasSentMessage] = useState(false);
 
   // State for streaming
   const [useStreaming, setUseStreaming] = useState(true);
-  const [, setIsReceivingChunks] = useState(false);
+
   // Initialize WebSocket connection
   useEffect(() => {
     logger.info('Component mounted, initializing WebSocket connection');
@@ -109,14 +47,17 @@ function App() {
     logger.info('Attempting to connect WebSocket:', wsUrl);
     
     try {
-        const websocket = new WebSocket(wsUrl);
-        setWs(websocket);
-        
-        websocket.onopen = () => {
+      const websocket = new WebSocket(wsUrl);
+      setWs(websocket);
+      
+      websocket.onopen = () => {
         setConnectionStatus('connected');
         logger.info('WebSocket connected');
         // Add welcome message
-        setMessages(prev => [...prev, { text: 'Hello! I\'m DeepAgents, your AI assistant. How can I help you today?', isUser: false }]);
+        setMessages(prev => [...prev, {
+          type: 'default',
+          content: 'Hello! I\'m DeepAgents, your AI assistant. How can I help you today?'
+        }]);
       };
       
       websocket.onmessage = (event) => {
@@ -126,70 +67,58 @@ function App() {
           logger.debug('Parsed message:', data);
           
           // Handle different message types with appropriate formatting and typing effect
-          if (data.type === 'chunk' || data.type === 'thought' || data.type === 'tool_call' || data.type === 'tool_response' || data.type === 'result') {
+          if (data.type === 'chunk' || data.type === 'thought' || data.type === 'tool_call' || 
+              data.type === 'tool_response' || data.type === 'result' || data.type === 'error' ||
+              data.type === 'process' || data.type === 'default' || data.type === 'plan' || 
+              data.type === 'todo') {
             logger.debug(`Received ${data.type}:`, data.content);
-            setIsTyping(true);
             
-            // Add with typing effect - pass the message type for proper formatting
-            addChunk(data.content, data.type);
+            // Route message to appropriate container based on type
+            const messageType = data.type === 'chunk' ? 'default' : data.type;
+            addChunk(data.content, messageType);
           } else if (data.type === 'complete') {
             logger.debug('Received complete message:', data.content);
-            completeStreaming();
-            setIsTyping(false);
-
+            completeStreaming(data.message_type || 'default');
           } else if (data.type === 'debug') {
             logger.debug('Received debug message:', data);
-            // Always append debug messages as new messages, never merge with chunks
-            setIsReceivingChunks(false);
-            // Display process information line by line in gray font
-            if (data.intent) {
-              setMessages(prev => [...prev, { text: `Detected intent: ${data.intent}`, isUser: false, isProcess: true }]);
-            }
-            if (data.message) {
-              setMessages(prev => [...prev, { text: `Processing message: ${data.message}`, isUser: false, isProcess: true }]);
-            }
-            if (data.agent) {
-              setMessages(prev => [...prev, { text: `Selected agent: ${data.agent}`, isUser: false, isProcess: true }]);
-            }
-            if (data.workflow_step) {
-              setMessages(prev => [...prev, { text: `Workflow step: ${data.workflow_step}`, isUser: false, isProcess: true }]);
-            }
-            if (data.step_name) {
-              setMessages(prev => [...prev, { text: `Current step: ${data.step_name}`, isUser: false, isProcess: true }]);
-            }
-            if (data.step_description) {
-              setMessages(prev => [...prev, { text: `Step description: ${data.step_description}`, isUser: false, isProcess: true }]);
-            }
-            if (data.task_plan) {
-              setMessages(prev => [...prev, { text: `Task plan: ${JSON.stringify(data.task_plan)}`, isUser: false, isProcess: true }]);
-            }
+            // Display debug messages in the process container
+            addChunk(`Debug: ${JSON.stringify(data)}`, 'process');
           } else if (data.type === 'status') {
             logger.info('Status message received:', data.message);
-            setMessages(prev => [...prev, { text: data.message, isUser: false, isProcess: true }]);
-          } else if (data.type === 'error') {
-            logger.error('Error message received:', data.message);
-            setMessages(prev => [...prev, { text: `Error: ${data.message}`, isUser: false, type: 'error' }]);
-            setIsTyping(false);
+            addChunk(data.message, 'process');
           } else {
             logger.warn('Unknown message type received:', data.type);
+            // Default to the default container for unknown types
+            setMessages(prev => [...prev, {
+              type: 'default',
+              content: `Unknown message type: ${JSON.stringify(data)}`
+            }]);
           }
         } catch (error) {
           logger.error('Error processing WebSocket message:', error);
-          setMessages(prev => [...prev, { text: `Error processing message: ${error}`, isUser: false }]);
-          setIsTyping(false);
+          setMessages(prev => [...prev, {
+            type: 'error',
+            content: `Error processing message: ${error}`
+          }]);
         }
       };
       
       websocket.onclose = (event) => {
         setConnectionStatus('disconnected');
         logger.info('WebSocket disconnected:', event.code, event.reason);
-        setMessages(prev => [...prev, { text: 'Connection to server lost. Please refresh the page to try again.', isUser: false }]);
+        setMessages(prev => [...prev, {
+          type: 'error',
+          content: 'Connection to server lost. Please refresh the page to try again.'
+        }]);
       };
       
       websocket.onerror = (error) => {
         setConnectionStatus('error');
         logger.error('WebSocket error:', error);
-        setMessages(prev => [...prev, { text: `Connection error: ${JSON.stringify(error)}`, isUser: false }]);
+        setMessages(prev => [...prev, {
+          type: 'error',
+          content: `Connection error: ${JSON.stringify(error)}`
+        }]);
       };
 
       // Cleanup on unmount
@@ -199,16 +128,26 @@ function App() {
           websocket.close();
         }
       };
-
     } catch (error) {
       logger.error('Error creating WebSocket:', error);
       setConnectionStatus('error');
-      setMessages(prev => [...prev, { text: `Failed to create WebSocket connection: ${error}`, isUser: false }]);
+      setMessages(prev => [...prev, {
+        type: 'error',
+        content: `Failed to create WebSocket connection: ${error}`
+      }]);
     }
   }, []);
 
-  // Use the typing effect hook
-  const { addChunk, completeStreaming, resetStreaming } = useTypingEffect({
+  // Use the decoupled typing effect hook
+  const { 
+    addChunk, 
+    completeStreaming, 
+    resetStreaming, 
+    startStreamingSession,
+    activeType,
+    isWaitingForNextType,
+    waitingType
+  } = useDecoupledTypingEffect({
     onMessagesUpdate: setMessages
   });
 
@@ -227,16 +166,20 @@ function App() {
     
     // Reset streaming state before new request
     resetStreaming();
+    startStreamingSession();
+    setHasSentMessage(true);
     
     // Add user message
-    setMessages(prev => [...prev, { text: inputValue, isUser: true }]);
+    setMessages(prev => [...prev, {
+      type: 'user',
+      content: inputValue
+    }]);
     
     // Send message to server
     ws.send(JSON.stringify({ message: inputValue, use_streaming: useStreaming }));
     
     // Clear input and show typing indicator
     setInputValue('');
-    setIsTyping(true);
   };
 
   return (
@@ -246,7 +189,7 @@ function App() {
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center">
             <i className="fas fa-robot text-indigo-500 text-2xl mr-3"></i>
-            <h1 className="text-xl font-semibold text-gray-800">DeepAgents AI</h1>
+            <h1 className="text-xl font-semibold text-gray-800">DeepAgents AI - Decoupled Messages</h1>
           </div>
           <div className="flex items-center">
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -275,24 +218,12 @@ function App() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-full flex flex-col">
           {/* Messages */}
           <div className="flex-1 p-4 message-container" ref={messageContainerRef}>
-            {messages.length === 0 && (
-              <div className="text-center text-gray-500 mt-8">
-                <i className="fas fa-robot text-4xl mb-4"></i>
-                <p>Hello! I'm DeepAgents, your AI assistant that can help with various tasks.</p>
-                <p className="mt-2">Try asking questions or requesting assistance with different scenarios.</p>
-              </div>
-            )}
-            {messages.map((message, index) => (
-              <MessageItem 
-                key={index} 
-                message={message.text} 
-                isUser={message.isUser} 
-                isDebug={message.isDebug} 
-                isProcess={message.isProcess} 
-                type={message.type} 
-              />
-            ))}
-            {isTyping && <TypingIndicator />}
+            <MessageManager 
+              messages={messages}
+              activeType={activeType}
+              isWaiting={hasSentMessage && isWaitingForNextType}
+              waitingType={waitingType}
+            />
           </div>
 
           {/* Input form */}
@@ -333,4 +264,4 @@ function App() {
   );
 }
 
-export default App;
+export default AppDecoupled;

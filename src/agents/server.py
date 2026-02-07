@@ -171,8 +171,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                     else:
                                         full_response += content
                         
-                        # Send complete response after streaming
-                        await websocket.send_json({"type": "complete", "content": "query complete."})
+                        await websocket.send_json({"type": "complete", "content": "query complete.", "message_type": "default"})
                     except Exception as stream_error:
                         # Fall back to non-streaming mode if streaming fails
                         logger.error(f"Streaming error: {stream_error}")

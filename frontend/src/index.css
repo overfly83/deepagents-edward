@@ -20,13 +20,14 @@ body {
   align-items: center;
 }
 
+/* Custom styles for typing indicator animation */
 .typing-indicator span {
   height: 8px;
   width: 8px;
   background-color: #6366f1;
-  border-radius: 50%;
   display: inline-block;
   margin: 0 2px;
+  border-radius: 50%;
   animation: typing 1.4s infinite;
 }
 
@@ -47,6 +48,7 @@ body {
   }
 }
 
+/* Fade-in animation for messages */
 .message-fade-in {
   animation: fadeIn 0.3s ease-in;
 }
@@ -54,4 +56,42 @@ body {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* Scrollbar styling */
+.chat-container .message-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-container .message-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.chat-container .message-container::-webkit-scrollbar-thumb {
+  background: #c5c5c5;
+  border-radius: 3px;
+}
+
+.chat-container .message-container::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Styles for decoupled message containers */
+.message-containers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.user-messages-container,
+.thought-messages-container,
+.tool-call-messages-container,
+.tool-response-messages-container,
+.process-messages-container,
+.result-messages-container,
+.error-messages-container,
+.default-messages-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }

@@ -2,7 +2,7 @@ import uuid
 from typing import Dict, List, Optional, Any, Tuple
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend, CompositeBackend
-from langchain.agents.middleware import TodoListMiddleware
+from middleware.todo_list_middleware import TodoListMiddleware
 from langchain_core.messages import HumanMessage
 
 from utils.logger import get_logger
@@ -120,6 +120,20 @@ class AgentManager:
         
         logger.info("AgentManager initialized with DeepAgents framework")
         logger.info("Enabled capabilities: Planning, Context Management, Subagent Spawning")
+
+    def _format_todo_list(self, todos: List[Dict[str, Any]]) -> str:
+        if not todos:
+            return "No todo items yet."
+
+        lines = []
+        for todo in todos:
+            todo_id = todo.get("id", "?")
+            status = todo.get("status", "pending")
+            task = todo.get("task", "")
+            priority = todo.get("priority", "medium")
+            lines.append(f"{todo_id}. [{status}] {task} ({priority})")
+
+        return "\n".join(lines)
 
     
     def _process_message(self, message: str, session_id: str) -> dict:
@@ -251,6 +265,21 @@ class AgentManager:
             logger.info(f"Generated new session ID: {session_id}")
         
         try:
+            todo_result = self.todo_middleware.process_message(session_id, message)
+            todo_items = self.todo_middleware.list_todos(session_id)
+            todo_text = self._format_todo_list(todo_items)
+            if todo_result:
+                todo_message = todo_result.get("message", "Updated todo list.")
+                yield {
+                    "type": "thought",
+                    "content": f"{todo_message}\n{todo_text}"
+                }
+            else:
+                yield {
+                    "type": "thought",
+                    "content": todo_text
+                }
+
             # Stream response from the DeepAgent directly with correct input format
             full_response = ""
             for chunk in self.deep_agent.stream({"messages": [HumanMessage(content=message)]}):
@@ -261,10 +290,17 @@ class AgentManager:
                     if any(key.endswith('.before_agent') or key.endswith('.after_agent') for key in chunk):
                         # This is a middleware thought/processing message
                         middleware_key = list(chunk.keys())[0]
-                        yield {
-                            "type": "thought",
-                            "content": f"{middleware_key}: {chunk[middleware_key]}"
-                        }
+                        thought_content = chunk[middleware_key]
+                        if thought_content:
+                            yield {
+                                "type": "thought",
+                                "content": f"{middleware_key}: {thought_content}"
+                            }
+                        else:
+                            yield {
+                                "type": "thought",
+                                "content": todo_text
+                            }
                     elif 'model' in chunk:
                         # This is a model response (could include tool calls)
                         model_data = chunk['model']
